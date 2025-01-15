@@ -3,17 +3,20 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Tasks;
 
 namespace Microsoft.SemanticKernel.Connectors.Pinecone;
 
 /// <summary>
 /// Utils for Pinecone connector.
 /// </summary>
+[Experimental("SKEXP0020")]
 public static class PineconeUtils
 {
     /// <summary>
@@ -71,9 +74,9 @@ public static class PineconeUtils
     public static async IAsyncEnumerable<PineconeDocument> EnsureValidMetadataAsync(
         IAsyncEnumerable<PineconeDocument> documents)
     {
-        await foreach (PineconeDocument document in documents)
+        await foreach (PineconeDocument document in documents.ConfigureAwait(false))
         {
-            if (document.Metadata == null || GetMetadataSize(document.Metadata) <= MaxMetadataSize)
+            if (document.Metadata is null || GetMetadataSize(document.Metadata) <= MaxMetadataSize)
             {
                 yield return document;
 
@@ -138,7 +141,7 @@ public static class PineconeUtils
         List<PineconeDocument> currentBatch = new(batchSize);
         int batchCounter = 0;
 
-        await foreach (PineconeDocument record in data)
+        await foreach (PineconeDocument record in data.ConfigureAwait(false))
         {
             currentBatch.Add(record);
 
@@ -182,7 +185,7 @@ public static class PineconeUtils
     /// </remarks>
     public static Dictionary<string, object> ConvertFilterToPineconeFilter(Dictionary<string, object> filter)
     {
-        Dictionary<string, object> pineconeFilter = new();
+        Dictionary<string, object> pineconeFilter = [];
 
         foreach (KeyValuePair<string, object> entry in filter)
         {
@@ -237,6 +240,7 @@ public static class PineconeUtils
             PodType.S1X4 => "s1x4",
             PodType.S1X8 => "s1x8",
             PodType.Starter => "starter",
+            PodType.Nano => "nano",
             _ => string.Empty
         };
     }

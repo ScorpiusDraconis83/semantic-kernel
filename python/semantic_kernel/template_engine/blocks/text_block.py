@@ -1,31 +1,47 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from typing import Any, Optional, Tuple
+from typing import TYPE_CHECKING, ClassVar, Optional
 
-from semantic_kernel.orchestration.context_variables import ContextVariables
+from pydantic import field_validator
+
 from semantic_kernel.template_engine.blocks.block import Block
 from semantic_kernel.template_engine.blocks.block_types import BlockTypes
+
+if TYPE_CHECKING:
+    from semantic_kernel.functions.kernel_arguments import KernelArguments
+    from semantic_kernel.kernel import Kernel
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
 class TextBlock(Block):
+    """A block with text content."""
+
+    type: ClassVar[BlockTypes] = BlockTypes.TEXT
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def content_strip(cls, content: str):
+        """Strip the content of the text block.
+
+        Overload strip method, text blocks are not stripped.
+        """
+        return content
+
     @classmethod
     def from_text(
         cls,
-        text: Optional[str] = None,
-        start_index: Optional[int] = None,
-        stop_index: Optional[int] = None,
-        log: Optional[Any] = None,
+        text: str | None = None,
+        start_index: int | None = None,
+        stop_index: int | None = None,
     ):
-        if log:
-            logger.warning("The `log` parameter is deprecated. Please use the `logging` module instead.")
+        """Create a text block from a string."""
         if text is None:
             return cls(content="")
         if start_index is not None and stop_index is not None:
             if start_index > stop_index:
-                raise ValueError(f"start_index ({start_index}) must be less than " f"stop_index ({stop_index})")
+                raise ValueError(f"start_index ({start_index}) must be less than stop_index ({stop_index})")
 
             if start_index < 0:
                 raise ValueError(f"start_index ({start_index}) must be greater than 0")
@@ -38,12 +54,6 @@ class TextBlock(Block):
 
         return cls(content=text)
 
-    @property
-    def type(self) -> BlockTypes:
-        return BlockTypes.TEXT
-
-    def is_valid(self) -> Tuple[bool, str]:
-        return True, ""
-
-    def render(self, _: Optional[ContextVariables] = None) -> str:
+    def render(self, *_: tuple[Optional["Kernel"], Optional["KernelArguments"]]) -> str:
+        """Render the text block."""
         return self.content

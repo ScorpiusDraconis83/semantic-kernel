@@ -1,6 +1,6 @@
 # Microsoft.SemanticKernel.Connectors.Chroma
 
-This assembly contains implementation of Semantic Kernel Memory Store using [Chroma](https://docs.trychroma.com/), open-source embedding database.
+This assembly contains implementation of Semantic Kernel Memory Store using [Chroma](https://www.trychroma.com/), open-source embedding database.
 
 **Note:** Chroma connector is verified using Chroma version **0.4.10**. Any higher versions may introduce incompatibility.
 
@@ -21,7 +21,7 @@ docker-compose up -d --build
 
 3. Use Semantic Kernel with Chroma, using server local endpoint `http://localhost:8000`:
 
-   > See [Example 14](../../../samples/KernelSyntaxExamples/Example14_SemanticMemory.cs) and [Example 15](../../../samples/KernelSyntaxExamples/Example15_TextMemoryPlugin.cs) for more memory usage examples with the kernel.
+   > See [Example 14](../../../samples/Concepts/Memory/SemanticTextMemory_Building.cs) and [Example 15](../../../samples/Concepts/Memory/TextMemoryPlugin_MultipleMemoryStore.cs) for more memory usage examples with the kernel.
 
 ```csharp
 const string endpoint = "http://localhost:8000";

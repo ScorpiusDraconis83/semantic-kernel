@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -12,13 +13,13 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.SemanticKernel.Text;
 
 namespace Microsoft.SemanticKernel;
 
@@ -26,8 +27,24 @@ namespace Microsoft.SemanticKernel;
 /// Provides factory methods for creating <see cref="KernelFunction"/> instances backed by a .NET method.
 /// </summary>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
-internal sealed class KernelFunctionFromMethod : KernelFunction
+internal sealed partial class KernelFunctionFromMethod : KernelFunction
 {
+    private static readonly Dictionary<Type, Func<string, object>> s_jsonStringParsers = new(12)
+    {
+        { typeof(bool), s => bool.Parse(s) },
+        { typeof(int), s => int.Parse(s) },
+        { typeof(uint), s => uint.Parse(s) },
+        { typeof(long), s => long.Parse(s) },
+        { typeof(ulong), s => ulong.Parse(s) },
+        { typeof(float), s => float.Parse(s) },
+        { typeof(double), s => double.Parse(s) },
+        { typeof(decimal), s => decimal.Parse(s) },
+        { typeof(short), s => short.Parse(s) },
+        { typeof(ushort), s => ushort.Parse(s) },
+        { typeof(byte), s => byte.Parse(s) },
+        { typeof(sbyte), s => sbyte.Parse(s) }
+    };
+
     /// <summary>
     /// Creates a <see cref="KernelFunction"/> instance for a method, specified via an <see cref="MethodInfo"/> instance
     /// and an optional target object if the method is an instance method.
@@ -40,6 +57,8 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
     /// <param name="returnParameter">Optional return parameter description. If null, it will default to one derived from the method represented by <paramref name="method"/>.</param>
     /// <param name="loggerFactory">The <see cref="ILoggerFactory"/> to use for logging. If null, no logging will be performed.</param>
     /// <returns>The created <see cref="KernelFunction"/> wrapper for <paramref name="method"/>.</returns>
+    [RequiresUnreferencedCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
     public static KernelFunction Create(
         MethodInfo method,
         object? target = null,
@@ -49,27 +68,266 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
         KernelReturnParameterMetadata? returnParameter = null,
         ILoggerFactory? loggerFactory = null)
     {
+        return Create(
+            method,
+            target,
+            new KernelFunctionFromMethodOptions
+            {
+                FunctionName = functionName,
+                Description = description,
+                Parameters = parameters,
+                ReturnParameter = returnParameter,
+                LoggerFactory = loggerFactory
+            });
+    }
+
+    /// <summary>
+    /// Creates a <see cref="KernelFunction"/> instance for a method, specified via an <see cref="MethodInfo"/> instance
+    /// and an optional target object if the method is an instance method.
+    /// </summary>
+    /// <param name="method">The method to be represented via the created <see cref="KernelFunction"/>.</param>
+    /// <param name="jsonSerializerOptions">The <see cref="JsonSerializerOptions"/> to use for serialization and deserialization of various aspects of the function.</param>
+    /// <param name="target">The target object for the <paramref name="method"/> if it represents an instance method. This should be null if and only if <paramref name="method"/> is a static method.</param>
+    /// <param name="functionName">The name to use for the function. If null, it will default to one derived from the method represented by <paramref name="method"/>.</param>
+    /// <param name="description">The description to use for the function. If null, it will default to one derived from the method represented by <paramref name="method"/>, if possible (e.g. via a <see cref="DescriptionAttribute"/> on the method).</param>
+    /// <param name="parameters">Optional parameter descriptions. If null, it will default to one derived from the method represented by <paramref name="method"/>.</param>
+    /// <param name="returnParameter">Optional return parameter description. If null, it will default to one derived from the method represented by <paramref name="method"/>.</param>
+    /// <param name="loggerFactory">The <see cref="ILoggerFactory"/> to use for logging. If null, no logging will be performed.</param>
+    /// <returns>The created <see cref="KernelFunction"/> wrapper for <paramref name="method"/>.</returns>
+    [Experimental("SKEXP0120")]
+    public static KernelFunction Create(
+        MethodInfo method,
+        JsonSerializerOptions jsonSerializerOptions,
+        object? target = null,
+        string? functionName = null,
+        string? description = null,
+        IEnumerable<KernelParameterMetadata>? parameters = null,
+        KernelReturnParameterMetadata? returnParameter = null,
+        ILoggerFactory? loggerFactory = null)
+    {
+        return Create(
+            method,
+            jsonSerializerOptions,
+            target,
+            new KernelFunctionFromMethodOptions
+            {
+                FunctionName = functionName,
+                Description = description,
+                Parameters = parameters,
+                ReturnParameter = returnParameter,
+                LoggerFactory = loggerFactory
+            });
+    }
+
+    /// <summary>
+    /// Creates a <see cref="KernelFunction"/> instance for a method, specified via an <see cref="MethodInfo"/> instance
+    /// and an optional target object if the method is an instance method.
+    /// </summary>
+    /// <param name="method">The method to be represented via the created <see cref="KernelFunction"/>.</param>
+    /// <param name="target">The target object for the <paramref name="method"/> if it represents an instance method. This should be null if and only if <paramref name="method"/> is a static method.</param>
+    /// <param name="options">Optional function creation options.</param>
+    /// <returns>The created <see cref="KernelFunction"/> wrapper for <paramref name="method"/>.</returns>
+    [RequiresUnreferencedCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    public static KernelFunction Create(
+        MethodInfo method,
+        object? target = null,
+        KernelFunctionFromMethodOptions? options = default)
+    {
         Verify.NotNull(method);
         if (!method.IsStatic && target is null)
         {
             throw new ArgumentNullException(nameof(target), "Target must not be null for an instance method.");
         }
 
-        MethodDetails methodDetails = GetMethodDetails(functionName, method, target);
+        MethodDetails methodDetails = GetMethodDetails(options?.FunctionName, method, target);
         var result = new KernelFunctionFromMethod(
             methodDetails.Function,
             methodDetails.Name,
-            description ?? methodDetails.Description,
-            parameters?.ToList() ?? methodDetails.Parameters,
-            returnParameter ?? methodDetails.ReturnParameter);
+            options?.Description ?? methodDetails.Description,
+            options?.Parameters?.ToList() ?? methodDetails.Parameters,
+            options?.ReturnParameter ?? methodDetails.ReturnParameter,
+            options?.AdditionalMetadata);
 
-        if (loggerFactory?.CreateLogger(method.DeclaringType ?? typeof(KernelFunctionFromPrompt)) is ILogger logger &&
+        if (options?.LoggerFactory?.CreateLogger(method.DeclaringType ?? typeof(KernelFunctionFromPrompt)) is ILogger logger &&
             logger.IsEnabled(LogLevel.Trace))
         {
             logger.LogTrace("Created KernelFunction '{Name}' for '{MethodName}'", result.Name, method.Name);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Creates a <see cref="KernelFunction"/> instance for a method, specified via an <see cref="MethodInfo"/> instance
+    /// and an optional target object if the method is an instance method.
+    /// </summary>
+    /// <param name="method">The method to be represented via the created <see cref="KernelFunction"/>.</param>
+    /// <param name="jsonSerializerOptions">The <see cref="JsonSerializerOptions"/> to use for serialization and deserialization of various aspects of the function.</param>
+    /// <param name="target">The target object for the <paramref name="method"/> if it represents an instance method. This should be null if and only if <paramref name="method"/> is a static method.</param>
+    /// <param name="options">Optional function creation options.</param>
+    /// <returns>The created <see cref="KernelFunction"/> wrapper for <paramref name="method"/>.</returns>
+    [Experimental("SKEXP0120")]
+    public static KernelFunction Create(
+        MethodInfo method,
+        JsonSerializerOptions jsonSerializerOptions,
+        object? target = null,
+        KernelFunctionFromMethodOptions? options = default)
+    {
+        Verify.NotNull(method);
+        Verify.NotNull(jsonSerializerOptions);
+        if (!method.IsStatic && target is null)
+        {
+            throw new ArgumentNullException(nameof(target), "Target must not be null for an instance method.");
+        }
+
+        MethodDetails methodDetails = GetMethodDetails(options?.FunctionName, method, jsonSerializerOptions, target);
+        var result = new KernelFunctionFromMethod(
+            methodDetails.Function,
+            methodDetails.Name,
+            options?.Description ?? methodDetails.Description,
+            options?.Parameters?.ToList() ?? methodDetails.Parameters,
+            options?.ReturnParameter ?? methodDetails.ReturnParameter,
+            jsonSerializerOptions,
+            options?.AdditionalMetadata);
+
+        if (options?.LoggerFactory?.CreateLogger(method.DeclaringType ?? typeof(KernelFunctionFromPrompt)) is ILogger logger &&
+            logger.IsEnabled(LogLevel.Trace))
+        {
+            logger.LogTrace("Created KernelFunction '{Name}' for '{MethodName}'", result.Name, method.Name);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Creates a <see cref="KernelFunctionMetadata"/> instance for a method, specified via an <see cref="MethodInfo"/> instance.
+    /// </summary>
+    /// <param name="method">The method to be represented via the created <see cref="KernelFunction"/>.</param>
+    /// <param name="functionName">The name to use for the function. If null, it will default to one derived from the method represented by <paramref name="method"/>.</param>
+    /// <param name="description">The description to use for the function. If null, it will default to one derived from the method represented by <paramref name="method"/>, if possible (e.g. via a <see cref="DescriptionAttribute"/> on the method).</param>
+    /// <param name="parameters">Optional parameter descriptions. If null, it will default to one derived from the method represented by <paramref name="method"/>.</param>
+    /// <param name="returnParameter">Optional return parameter description. If null, it will default to one derived from the method represented by <paramref name="method"/>.</param>
+    /// <param name="loggerFactory">The <see cref="ILoggerFactory"/> to use for logging. If null, no logging will be performed.</param>
+    /// <returns>The created <see cref="KernelFunction"/> wrapper for <paramref name="method"/>.</returns>
+    [Experimental("SKEXP0001")]
+    [RequiresUnreferencedCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    public static KernelFunctionMetadata CreateMetadata(
+        MethodInfo method,
+        string? functionName = null,
+        string? description = null,
+        IEnumerable<KernelParameterMetadata>? parameters = null,
+        KernelReturnParameterMetadata? returnParameter = null,
+        ILoggerFactory? loggerFactory = null)
+        => CreateMetadata(
+            method,
+            new KernelFunctionFromMethodOptions
+            {
+                FunctionName = functionName,
+                Description = description,
+                Parameters = parameters,
+                ReturnParameter = returnParameter,
+                LoggerFactory = loggerFactory
+            });
+
+    /// <summary>
+    /// Creates a <see cref="KernelFunctionMetadata"/> instance for a method, specified via an <see cref="MethodInfo"/> instance.
+    /// </summary>
+    /// <param name="method">The method to be represented via the created <see cref="KernelFunction"/>.</param>
+    /// <param name="jsonSerializerOptions">The <see cref="JsonSerializerOptions"/> to use for serialization and deserialization of various aspects of the function.</param>
+    /// <param name="functionName">The name to use for the function. If null, it will default to one derived from the method represented by <paramref name="method"/>.</param>
+    /// <param name="description">The description to use for the function. If null, it will default to one derived from the method represented by <paramref name="method"/>, if possible (e.g. via a <see cref="DescriptionAttribute"/> on the method).</param>
+    /// <param name="parameters">Optional parameter descriptions. If null, it will default to one derived from the method represented by <paramref name="method"/>.</param>
+    /// <param name="returnParameter">Optional return parameter description. If null, it will default to one derived from the method represented by <paramref name="method"/>.</param>
+    /// <param name="loggerFactory">The <see cref="ILoggerFactory"/> to use for logging. If null, no logging will be performed.</param>
+    /// <returns>The created <see cref="KernelFunction"/> wrapper for <paramref name="method"/>.</returns>
+    [Experimental("SKEXP0120")]
+    public static KernelFunctionMetadata CreateMetadata(
+        MethodInfo method,
+        JsonSerializerOptions jsonSerializerOptions,
+        string? functionName = null,
+        string? description = null,
+        IEnumerable<KernelParameterMetadata>? parameters = null,
+        KernelReturnParameterMetadata? returnParameter = null,
+        ILoggerFactory? loggerFactory = null)
+        => CreateMetadata(
+            method,
+            jsonSerializerOptions,
+            new KernelFunctionFromMethodOptions
+            {
+                FunctionName = functionName,
+                Description = description,
+                Parameters = parameters,
+                ReturnParameter = returnParameter,
+                LoggerFactory = loggerFactory
+            });
+
+    /// <summary>
+    /// Creates a <see cref="KernelFunctionMetadata"/> instance for a method, specified via an <see cref="MethodInfo"/> instance.
+    /// </summary>
+    /// <param name="method">The method to be represented via the created <see cref="KernelFunction"/>.</param>
+    /// <param name="options">Optional function creation options.</param>
+    /// <returns>The created <see cref="KernelFunction"/> wrapper for <paramref name="method"/>.</returns>
+    [Experimental("SKEXP0001")]
+    [RequiresUnreferencedCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    public static KernelFunctionMetadata CreateMetadata(
+        MethodInfo method,
+        KernelFunctionFromMethodOptions? options = default)
+    {
+        Verify.NotNull(method);
+
+        MethodDetails methodDetails = GetMethodDetails(options?.FunctionName, method, null);
+        var result = new KernelFunctionFromMethod(
+            methodDetails.Function,
+            methodDetails.Name,
+            options?.Description ?? methodDetails.Description,
+            options?.Parameters?.ToList() ?? methodDetails.Parameters,
+            options?.ReturnParameter ?? methodDetails.ReturnParameter,
+            options?.AdditionalMetadata);
+
+        if (options?.LoggerFactory?.CreateLogger(method.DeclaringType ?? typeof(KernelFunctionFromPrompt)) is ILogger logger &&
+            logger.IsEnabled(LogLevel.Trace))
+        {
+            logger.LogTrace("Created KernelFunctionMetadata '{Name}' for '{MethodName}'", result.Name, method.Name);
+        }
+
+        return result.Metadata;
+    }
+
+    /// <summary>
+    /// Creates a <see cref="KernelFunctionMetadata"/> instance for a method, specified via an <see cref="MethodInfo"/> instance.
+    /// </summary>
+    /// <param name="method">The method to be represented via the created <see cref="KernelFunction"/>.</param>
+    /// <param name="jsonSerializerOptions">The <see cref="JsonSerializerOptions"/> to use for serialization and deserialization of various aspects of the function.</param>
+    /// <param name="options">Optional function creation options.</param>
+    /// <returns>The created <see cref="KernelFunction"/> wrapper for <paramref name="method"/>.</returns>
+    [Experimental("SKEXP0120")]
+    public static KernelFunctionMetadata CreateMetadata(
+        MethodInfo method,
+        JsonSerializerOptions jsonSerializerOptions,
+        KernelFunctionFromMethodOptions? options = default)
+    {
+        Verify.NotNull(method);
+
+        MethodDetails methodDetails = GetMethodDetails(options?.FunctionName, method, jsonSerializerOptions, target: null);
+        var result = new KernelFunctionFromMethod(
+            methodDetails.Function,
+            methodDetails.Name,
+            options?.Description ?? methodDetails.Description,
+            options?.Parameters?.ToList() ?? methodDetails.Parameters,
+            options?.ReturnParameter ?? methodDetails.ReturnParameter,
+            jsonSerializerOptions,
+            options?.AdditionalMetadata);
+
+        if (options?.LoggerFactory?.CreateLogger(method.DeclaringType ?? typeof(KernelFunctionFromPrompt)) is ILogger logger &&
+            logger.IsEnabled(LogLevel.Trace))
+        {
+            logger.LogTrace("Created KernelFunctionMetadata '{Name}' for '{MethodName}'", result.Name, method.Name);
+        }
+
+        return result.Metadata;
     }
 
     /// <inheritdoc/>
@@ -120,16 +378,42 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
         }
 
         throw new NotSupportedException($"Streaming function {this.Name} does not support type {typeof(TResult)}");
-
-        // We don't invoke the hook here as the InvokeCoreAsync will do that for us
     }
 
-    /// <summary>
-    /// JSON serialized string representation of the function.
-    /// </summary>
-    public override string ToString() => JsonSerializer.Serialize(this, JsonOptionsCache.WriteIndented);
+    /// <inheritdoc/>
+    public override KernelFunction Clone(string pluginName)
+    {
+        Verify.NotNullOrWhiteSpace(pluginName, nameof(pluginName));
 
-    #region private
+        if (base.JsonSerializerOptions is not null)
+        {
+            return new KernelFunctionFromMethod(
+            this._function,
+            this.Name,
+            pluginName,
+            this.Description,
+            this.Metadata.Parameters,
+            this.Metadata.ReturnParameter,
+            base.JsonSerializerOptions,
+            this.Metadata.AdditionalProperties);
+        }
+
+        [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "Non AOT scenario.")]
+        [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.", Justification = "Non AOT scenario.")]
+        KernelFunctionFromMethod Clone()
+        {
+            return new KernelFunctionFromMethod(
+            this._function,
+            this.Name,
+            pluginName,
+            this.Description,
+            this.Metadata.Parameters,
+            this.Metadata.ReturnParameter,
+            this.Metadata.AdditionalProperties);
+        }
+
+        return Clone();
+    }
 
     /// <summary>Delegate used to invoke the underlying delegate.</summary>
     private delegate ValueTask<FunctionResult> ImplementationFunc(
@@ -138,27 +422,82 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
         KernelArguments arguments,
         CancellationToken cancellationToken);
 
-    private static readonly object[] s_cancellationTokenNoneArray = new object[] { CancellationToken.None };
+    private static readonly object[] s_cancellationTokenNoneArray = [CancellationToken.None];
     private readonly ImplementationFunc _function;
 
     private record struct MethodDetails(string Name, string Description, ImplementationFunc Function, List<KernelParameterMetadata> Parameters, KernelReturnParameterMetadata ReturnParameter);
+
+    [RequiresUnreferencedCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    private KernelFunctionFromMethod(
+        ImplementationFunc implementationFunc,
+        string functionName,
+        string description,
+        IReadOnlyList<KernelParameterMetadata> parameters,
+        KernelReturnParameterMetadata returnParameter,
+        ReadOnlyDictionary<string, object?>? additionalMetadata = null) :
+        this(implementationFunc, functionName, null, description, parameters, returnParameter, additionalMetadata)
+    {
+    }
 
     private KernelFunctionFromMethod(
         ImplementationFunc implementationFunc,
         string functionName,
         string description,
         IReadOnlyList<KernelParameterMetadata> parameters,
-        KernelReturnParameterMetadata returnParameter) :
-        base(functionName, description, parameters, returnParameter)
+        KernelReturnParameterMetadata returnParameter,
+        JsonSerializerOptions jsonSerializerOptions,
+        ReadOnlyDictionary<string, object?>? additionalMetadata = null) :
+        this(implementationFunc, functionName, null, description, parameters, returnParameter, jsonSerializerOptions, additionalMetadata)
+    {
+    }
+
+    [RequiresUnreferencedCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    private KernelFunctionFromMethod(
+        ImplementationFunc implementationFunc,
+        string functionName,
+        string? pluginName,
+        string description,
+        IReadOnlyList<KernelParameterMetadata> parameters,
+        KernelReturnParameterMetadata returnParameter,
+        ReadOnlyDictionary<string, object?>? additionalMetadata = null) :
+        base(functionName, pluginName, description, parameters, returnParameter, additionalMetadata: additionalMetadata)
     {
         Verify.ValidFunctionName(functionName);
 
         this._function = implementationFunc;
     }
 
-    private static MethodDetails GetMethodDetails(string? functionName, MethodInfo method, object? target)
+    private KernelFunctionFromMethod(
+        ImplementationFunc implementationFunc,
+        string functionName,
+        string? pluginName,
+        string description,
+        IReadOnlyList<KernelParameterMetadata> parameters,
+        KernelReturnParameterMetadata returnParameter,
+        JsonSerializerOptions jsonSerializerOptions,
+        ReadOnlyDictionary<string, object?>? additionalMetadata = null) :
+        base(functionName, pluginName, description, parameters, jsonSerializerOptions, returnParameter, additionalMetadata: additionalMetadata)
     {
-        ThrowForInvalidSignatureIf(method.IsGenericMethodDefinition, method, "Generic methods are not supported");
+        Verify.ValidFunctionName(functionName);
+
+        this._function = implementationFunc;
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "This method is AOT save.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.", Justification = "This method is AOT safe.")]
+    private static MethodDetails GetMethodDetails(string? functionName, MethodInfo method, JsonSerializerOptions jsonSerializerOptions, object? target)
+    {
+        Verify.NotNull(jsonSerializerOptions);
+        return GetMethodDetails(functionName, method, target, jsonSerializerOptions);
+    }
+
+    [RequiresUnreferencedCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    private static MethodDetails GetMethodDetails(string? functionName, MethodInfo method, object? target, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        ThrowForInvalidSignatureIf(method.ContainsGenericParameters, method, "Open generic methods are not supported");
 
         if (functionName is null)
         {
@@ -185,7 +524,7 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
         // Build up a list of KernelParameterMetadata for the parameters we expect to be populated
         // from arguments. Some arguments are populated specially, not from arguments, and thus
         // we don't want to advertize their metadata, e.g. CultureInfo, ILoggerFactory, etc.
-        List<KernelParameterMetadata> argParameterViews = new();
+        List<KernelParameterMetadata> argParameterViews = [];
 
         // Get marshaling funcs for parameters and build up the parameter metadata.
         var parameters = method.GetParameters();
@@ -193,7 +532,7 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
         bool sawFirstParameter = false;
         for (int i = 0; i < parameters.Length; i++)
         {
-            (parameterFuncs[i], KernelParameterMetadata? parameterView) = GetParameterMarshalerDelegate(method, parameters[i], ref sawFirstParameter);
+            (parameterFuncs[i], KernelParameterMetadata? parameterView) = GetParameterMarshalerDelegate(method, parameters[i], ref sawFirstParameter, jsonSerializerOptions);
             if (parameterView is not null)
             {
                 argParameterViews.Add(parameterView);
@@ -215,7 +554,7 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
         ValueTask<FunctionResult> Function(Kernel kernel, KernelFunction function, KernelArguments arguments, CancellationToken cancellationToken)
         {
             // Create the arguments.
-            object?[] args = parameterFuncs.Length != 0 ? new object?[parameterFuncs.Length] : Array.Empty<object?>();
+            object?[] args = parameterFuncs.Length != 0 ? new object?[parameterFuncs.Length] : [];
             for (int i = 0; i < args.Length; i++)
             {
                 args[i] = parameterFuncs[i](function, kernel, arguments, cancellationToken);
@@ -228,6 +567,25 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
             return returnFunc(kernel, function, result);
         }
 
+        KernelReturnParameterMetadata returnParameterMetadata;
+
+        if (jsonSerializerOptions is not null)
+        {
+            returnParameterMetadata = new KernelReturnParameterMetadata(jsonSerializerOptions)
+            {
+                ParameterType = returnType,
+                Description = method.ReturnParameter.GetCustomAttribute<DescriptionAttribute>(inherit: true)?.Description,
+            };
+        }
+        else
+        {
+            returnParameterMetadata = new KernelReturnParameterMetadata()
+            {
+                ParameterType = returnType,
+                Description = method.ReturnParameter.GetCustomAttribute<DescriptionAttribute>(inherit: true)?.Description,
+            };
+        }
+
         // And return the details.
         return new MethodDetails
         {
@@ -235,11 +593,7 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
             Name = functionName!,
             Description = method.GetCustomAttribute<DescriptionAttribute>(inherit: true)?.Description ?? "",
             Parameters = argParameterViews,
-            ReturnParameter = new KernelReturnParameterMetadata()
-            {
-                ParameterType = returnType,
-                Description = method.ReturnParameter.GetCustomAttribute<DescriptionAttribute>(inherit: true)?.Description,
-            }
+            ReturnParameter = returnParameterMetadata
         };
     }
 
@@ -268,8 +622,10 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
     /// <summary>
     /// Gets a delegate for handling the marshaling of a parameter.
     /// </summary>
+    [RequiresUnreferencedCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection to handle various aspects of the function creation and invocation, making it incompatible with AOT scenarios.")]
     private static (Func<KernelFunction, Kernel, KernelArguments, CancellationToken, object?>, KernelParameterMetadata?) GetParameterMarshalerDelegate(
-        MethodInfo method, ParameterInfo parameter, ref bool sawFirstParameter)
+        MethodInfo method, ParameterInfo parameter, ref bool sawFirstParameter, JsonSerializerOptions? jsonSerializerOptions)
     {
         Type type = parameter.ParameterType;
 
@@ -370,7 +726,12 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
 
             object? Process(object? value)
             {
-                if (!type.IsAssignableFrom(value?.GetType()) && converter is not null)
+                if (type.IsAssignableFrom(value?.GetType()))
+                {
+                    return value;
+                }
+
+                if (converter is not null && value is not JsonElement or JsonDocument or JsonNode)
                 {
                     try
                     {
@@ -382,21 +743,90 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
                     }
                 }
 
+                if (value is JsonElement element && element.ValueKind == JsonValueKind.String
+                    && s_jsonStringParsers.TryGetValue(type, out var jsonStringParser))
+                {
+                    return jsonStringParser(element.GetString()!);
+                }
+
+                if (value is not null && TryToDeserializeValue(value, type, jsonSerializerOptions, out var deserializedValue))
+                {
+                    return deserializedValue;
+                }
+
                 return value;
             }
         }
 
         sawFirstParameter = true;
 
-        var parameterView = new KernelParameterMetadata(name)
+        KernelParameterMetadata? parameterView;
+
+        if (jsonSerializerOptions is not null)
         {
-            Description = parameter.GetCustomAttribute<DescriptionAttribute>(inherit: true)?.Description,
-            DefaultValue = parameter.DefaultValue?.ToString(),
-            IsRequired = !parameter.IsOptional,
-            ParameterType = type,
-        };
+            parameterView = new KernelParameterMetadata(name, jsonSerializerOptions)
+            {
+                Description = parameter.GetCustomAttribute<DescriptionAttribute>(inherit: true)?.Description,
+                DefaultValue = parameter.HasDefaultValue ? parameter.DefaultValue?.ToString() : null,
+                IsRequired = !parameter.IsOptional,
+                ParameterType = type,
+            };
+        }
+        else
+        {
+            parameterView = new KernelParameterMetadata(name)
+            {
+                Description = parameter.GetCustomAttribute<DescriptionAttribute>(inherit: true)?.Description,
+                DefaultValue = parameter.HasDefaultValue ? parameter.DefaultValue?.ToString() : null,
+                IsRequired = !parameter.IsOptional,
+                ParameterType = type,
+            };
+        }
 
         return (parameterFunc, parameterView);
+    }
+
+    /// <summary>
+    /// Tries to deserialize the given value into an object of the specified target type.
+    /// </summary>
+    /// <param name="value">The value to be deserialized.</param>
+    /// <param name="targetType">The type of the object to deserialize the value into.</param>
+    /// <param name="jsonSerializerOptions">The <see cref="JsonSerializerOptions"/> to use for deserialization.</param>
+    /// <param name="deserializedValue">The deserialized object if the method succeeds; otherwise, null.</param>
+    /// <returns>true if the value is successfully deserialized; otherwise, false.</returns>
+    [RequiresUnreferencedCode("Uses reflection to deserialize given value if no source generated metadata provided via JSOs, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection to deserialize given value if no source generated metadata provided via JSOs, making it incompatible with AOT scenarios.")]
+    private static bool TryToDeserializeValue(object value, Type targetType, JsonSerializerOptions? jsonSerializerOptions, out object? deserializedValue)
+    {
+        try
+        {
+            deserializedValue = value switch
+            {
+                JsonDocument document => document.Deserialize(targetType, jsonSerializerOptions),
+                JsonNode node => node.Deserialize(targetType, jsonSerializerOptions),
+                JsonElement element => element.Deserialize(targetType, jsonSerializerOptions),
+                // The JSON can be represented by other data types from various libraries. For example, JObject, JToken, and JValue from the Newtonsoft.Json library.  
+                // Since we don't take dependencies on these libraries and don't have access to the types here,
+                // the only way to deserialize those types is to convert them to a string first by calling the 'ToString' method.
+                // Attempting to use the 'JsonSerializer.Serialize' method, instead of calling the 'ToString' directly on those types, can lead to unpredictable outcomes.
+                // For instance, the JObject for { "id": 28 } JSON is serialized into the string  "{ "Id": [] }", and the deserialization fails with the
+                // following exception - "The JSON value could not be converted to System.Int32. Path: $.Id | LineNumber: 0 | BytePositionInLine: 7."
+                _ => JsonSerializer.Deserialize(value.ToString()!, targetType, jsonSerializerOptions)
+            };
+
+            return true;
+        }
+        catch (NotSupportedException)
+        {
+            // There is no compatible JsonConverter for targetType or its serializable members.
+        }
+        catch (JsonException)
+        {
+            // The JSON is invalid.
+        }
+
+        deserializedValue = null;
+        return false;
     }
 
     /// <summary>
@@ -497,79 +927,89 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
             );
         }
 
-        // All other synchronous return types T.
-
-        if (!returnType.IsGenericType || returnType.GetGenericTypeDefinition() == typeof(Nullable<>))
+        // Asynchronous return types
+        if (returnType.IsGenericType)
         {
-            return (returnType, (kernel, function, result) =>
+            // Task<T>
+#if NET6_0_OR_GREATER
+            if (returnType.GetGenericTypeDefinition() == typeof(Task<>) &&
+                ((PropertyInfo)returnType.GetMemberWithSameMetadataDefinitionAs(s_taskGetResultPropertyInfo)) is PropertyInfo taskPropertyInfo &&
+                taskPropertyInfo.GetGetMethod() is MethodInfo taskResultGetter)
+#else
+            if (returnType.GetGenericTypeDefinition() == typeof(Task<>) &&
+                returnType.GetProperty("Result", BindingFlags.Public | BindingFlags.Instance)?.GetGetMethod() is MethodInfo taskResultGetter)
+#endif
             {
-                return new ValueTask<FunctionResult>(new FunctionResult(function, result, kernel.Culture));
-            }
-            );
-        }
-
-        // All other asynchronous return types
-
-        // Task<T>
-        if (returnType.GetGenericTypeDefinition() is Type genericTask &&
-            genericTask == typeof(Task<>) &&
-            returnType.GetProperty("Result", BindingFlags.Public | BindingFlags.Instance)?.GetGetMethod() is MethodInfo taskResultGetter)
-        {
-            return (taskResultGetter.ReturnType, async (kernel, function, result) =>
-            {
-                await ((Task)ThrowIfNullResult(result)).ConfigureAwait(false);
-
-                var taskResult = Invoke(taskResultGetter, result, Array.Empty<object>());
-                return new FunctionResult(function, taskResult, kernel.Culture);
-            }
-            );
-        }
-
-        // ValueTask<T>
-        if (returnType.GetGenericTypeDefinition() is Type genericValueTask &&
-            genericValueTask == typeof(ValueTask<>) &&
-            returnType.GetMethod("AsTask", BindingFlags.Public | BindingFlags.Instance) is MethodInfo valueTaskAsTask &&
-            valueTaskAsTask.ReturnType.GetProperty("Result", BindingFlags.Public | BindingFlags.Instance)?.GetGetMethod() is MethodInfo asTaskResultGetter)
-        {
-            return (asTaskResultGetter.ReturnType, async (kernel, function, result) =>
-            {
-                Task task = (Task)Invoke(valueTaskAsTask, ThrowIfNullResult(result), Array.Empty<object>())!;
-                await task.ConfigureAwait(false);
-
-                var taskResult = Invoke(asTaskResultGetter, task, Array.Empty<object>());
-                return new FunctionResult(function, taskResult, kernel.Culture);
-            }
-            );
-        }
-
-        // IAsyncEnumerable<T>
-        if (returnType.GetGenericTypeDefinition() is Type genericAsyncEnumerable && genericAsyncEnumerable == typeof(IAsyncEnumerable<>))
-        {
-            Type elementType = returnType.GetGenericArguments()[0];
-
-            MethodInfo? getAsyncEnumeratorMethod = typeof(IAsyncEnumerable<>)
-                .MakeGenericType(elementType)
-                .GetMethod("GetAsyncEnumerator");
-
-            if (getAsyncEnumeratorMethod is not null)
-            {
-                return (returnType, (kernel, function, result) =>
+                return (taskResultGetter.ReturnType, async (kernel, function, result) =>
                 {
-                    var asyncEnumerator = Invoke(getAsyncEnumeratorMethod, result, s_cancellationTokenNoneArray);
+                    await ((Task)ThrowIfNullResult(result)).ConfigureAwait(false);
 
-                    if (asyncEnumerator is not null)
-                    {
-                        return new ValueTask<FunctionResult>(new FunctionResult(function, asyncEnumerator, kernel.Culture));
-                    }
-
-                    return new ValueTask<FunctionResult>(new FunctionResult(function));
+                    var taskResult = Invoke(taskResultGetter, result, null);
+                    return new FunctionResult(function, taskResult, kernel.Culture);
                 }
                 );
             }
+
+            // ValueTask<T>
+#if NET6_0_OR_GREATER
+            if (returnType.GetGenericTypeDefinition() == typeof(ValueTask<>) &&
+                   returnType.GetMemberWithSameMetadataDefinitionAs(s_valueTaskGetAsTaskMethodInfo) is MethodInfo valueTaskAsTask &&
+                   valueTaskAsTask.ReturnType.GetMemberWithSameMetadataDefinitionAs(s_taskGetResultPropertyInfo) is PropertyInfo valueTaskPropertyInfo &&
+                   valueTaskPropertyInfo.GetGetMethod() is MethodInfo asTaskResultGetter)
+#else
+            if (returnType.GetGenericTypeDefinition() == typeof(ValueTask<>) &&
+                    returnType.GetMethod("AsTask", BindingFlags.Public | BindingFlags.Instance) is MethodInfo valueTaskAsTask &&
+                    valueTaskAsTask.ReturnType.GetProperty("Result", BindingFlags.Public | BindingFlags.Instance)?.GetGetMethod() is MethodInfo asTaskResultGetter)
+#endif
+            {
+                return (asTaskResultGetter.ReturnType, async (kernel, function, result) =>
+                {
+                    Task task = (Task)Invoke(valueTaskAsTask, ThrowIfNullResult(result), null)!;
+                    await task.ConfigureAwait(false);
+
+                    var taskResult = Invoke(asTaskResultGetter, task, null);
+                    return new FunctionResult(function, taskResult, kernel.Culture);
+                }
+                );
+            }
+
+            // IAsyncEnumerable<T>
+            if (returnType.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>))
+            {
+#if NET6_0_OR_GREATER
+                //typeof(IAsyncEnumerable<>).GetMethod("GetAsyncEnumerator")!;
+                MethodInfo? getAsyncEnumeratorMethod = returnType.GetMemberWithSameMetadataDefinitionAs(s_asyncEnumerableGetAsyncEnumeratorMethodInfo) as MethodInfo;
+#else
+                Type elementType = returnType.GetGenericArguments()[0];
+                MethodInfo? getAsyncEnumeratorMethod = typeof(IAsyncEnumerable<>)
+                    .MakeGenericType(elementType)
+                    .GetMethod("GetAsyncEnumerator");
+#endif
+
+                if (getAsyncEnumeratorMethod is not null)
+                {
+                    return (returnType, (kernel, function, result) =>
+                    {
+                        var asyncEnumerator = Invoke(getAsyncEnumeratorMethod, result, s_cancellationTokenNoneArray);
+
+                        if (asyncEnumerator is not null)
+                        {
+                            return new ValueTask<FunctionResult>(new FunctionResult(function, asyncEnumerator, kernel.Culture));
+                        }
+
+                        return new ValueTask<FunctionResult>(new FunctionResult(function));
+                    }
+                    );
+                }
+            }
         }
 
-        // Unrecognized return type.
-        throw GetExceptionForInvalidSignature(method, $"Unknown return type {returnType}");
+        // For everything else, just use the result as-is.
+        return (returnType, (kernel, function, result) =>
+        {
+            return new ValueTask<FunctionResult>(new FunctionResult(function, result, kernel.Culture));
+        }
+        );
 
         // Throws an exception if a result is found to be null unexpectedly
         static object ThrowIfNullResult(object? result) =>
@@ -699,14 +1139,23 @@ internal sealed class KernelFunctionFromMethod : KernelFunction
     /// <summary>
     /// Remove characters from method name that are valid in metadata but invalid for SK.
     /// </summary>
-    private static string SanitizeMetadataName(string methodName) =>
-        s_invalidNameCharsRegex.Replace(methodName, "_");
+    internal static string SanitizeMetadataName(string methodName) =>
+        InvalidNameCharsRegex().Replace(methodName, "_");
 
     /// <summary>Regex that flags any character other than ASCII digits or letters or the underscore.</summary>
-    private static readonly Regex s_invalidNameCharsRegex = new("[^0-9A-Za-z_]");
+#if NET
+    [GeneratedRegex("[^0-9A-Za-z_]")]
+    private static partial Regex InvalidNameCharsRegex();
+#else
+    private static Regex InvalidNameCharsRegex() => s_invalidNameCharsRegex;
+    private static readonly Regex s_invalidNameCharsRegex = new("[^0-9A-Za-z_]", RegexOptions.Compiled);
+#endif
 
     /// <summary>Parser functions for converting strings to parameter types.</summary>
     private static readonly ConcurrentDictionary<Type, Func<object?, CultureInfo, object?>?> s_parsers = new();
-
-    #endregion
+#if NET6_0_OR_GREATER
+    private static readonly MethodInfo s_valueTaskGetAsTaskMethodInfo = typeof(ValueTask<>).GetMethod("AsTask", BindingFlags.Public | BindingFlags.Instance)!;
+    private static readonly MemberInfo s_taskGetResultPropertyInfo = typeof(Task<>).GetProperty("Result", BindingFlags.Public | BindingFlags.Instance)!;
+    private static readonly MethodInfo s_asyncEnumerableGetAsyncEnumeratorMethodInfo = typeof(IAsyncEnumerable<>).GetMethod("GetAsyncEnumerator")!;
+#endif
 }

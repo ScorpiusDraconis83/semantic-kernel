@@ -13,13 +13,13 @@ public class FormStyleParametersSerializerTests
     public void ItShouldCreateAmpersandSeparatedParameterPerArrayItem()
     {
         // Arrange
-        var parameter = new RestApiOperationParameter(
+        var parameter = new RestApiParameter(
                 name: "id",
                 type: "array",
                 isRequired: true,
                 expand: true, //Specify generating a separate parameter for each array item.
-                location: RestApiOperationParameterLocation.Query,
-                style: RestApiOperationParameterStyle.Form,
+                location: RestApiParameterLocation.Query,
+                style: RestApiParameterStyle.Form,
                 arrayItemType: "integer");
 
         // Act
@@ -35,13 +35,13 @@ public class FormStyleParametersSerializerTests
     public void ItShouldCreateParameterWithCommaSeparatedValuePerArrayItem()
     {
         // Arrange
-        var parameter = new RestApiOperationParameter(
+        var parameter = new RestApiParameter(
                 name: "id",
                 type: "array",
                 isRequired: true,
                 expand: false, //Specify generating a parameter with comma-separated values for each array item.
-                location: RestApiOperationParameterLocation.Query,
-                style: RestApiOperationParameterStyle.Form,
+                location: RestApiParameterLocation.Query,
+                style: RestApiParameterStyle.Form,
                 arrayItemType: "integer");
 
         // Act
@@ -57,13 +57,13 @@ public class FormStyleParametersSerializerTests
     public void ItShouldCreateParameterForPrimitiveValue()
     {
         // Arrange
-        var parameter = new RestApiOperationParameter(
+        var parameter = new RestApiParameter(
                 name: "id",
                 type: "integer",
                 isRequired: true,
                 expand: false,
-                location: RestApiOperationParameterLocation.Query,
-                style: RestApiOperationParameterStyle.Form);
+                location: RestApiParameterLocation.Query,
+                style: RestApiParameterStyle.Form);
 
         // Act
         var result = FormStyleParameterSerializer.Serialize(parameter, "28");
@@ -75,16 +75,16 @@ public class FormStyleParametersSerializerTests
     }
 
     [Fact]
-    public void ItShouldCreateParameterForStringValue()
+    public void ItShouldCreateParameterForDateTimeValue()
     {
         // Arrange
-        var parameter = new RestApiOperationParameter(
+        var parameter = new RestApiParameter(
                 name: "id",
                 type: "string",
                 isRequired: true,
                 expand: false,
-                location: RestApiOperationParameterLocation.Query,
-                style: RestApiOperationParameterStyle.Form);
+                location: RestApiParameterLocation.Query,
+                style: RestApiParameterStyle.Form);
 
         // Act
         var result = FormStyleParameterSerializer.Serialize(parameter, JsonValue.Create(new DateTime(2023, 12, 06, 11, 53, 36, DateTimeKind.Utc)));
@@ -96,6 +96,28 @@ public class FormStyleParametersSerializerTests
     }
 
     [Theory]
+    [InlineData("2024-01-01T00:00:00+00:00", "2024-01-01T00%3a00%3a00%2b00%3a00")]
+    public void ItShouldCreateParameterForStringValue(string value, string encodedValue)
+    {
+        // Arrange
+        var parameter = new RestApiParameter(
+                name: "id",
+                type: "string",
+                isRequired: true,
+                expand: false,
+                location: RestApiParameterLocation.Query,
+                style: RestApiParameterStyle.Form);
+
+        // Act
+        var result = FormStyleParameterSerializer.Serialize(parameter, JsonValue.Create(value));
+
+        // Assert
+        Assert.NotNull(result);
+
+        Assert.Equal($"id={encodedValue}", result);
+    }
+
+    [Theory]
     [InlineData(":", "%3a")]
     [InlineData("/", "%2f")]
     [InlineData("?", "%3f")]
@@ -103,7 +125,7 @@ public class FormStyleParametersSerializerTests
     public void ItShouldEncodeSpecialSymbolsInPrimitiveParameterValues(string specialSymbol, string encodedEquivalent)
     {
         // Arrange
-        var parameter = new RestApiOperationParameter("id", "string", false, false, RestApiOperationParameterLocation.Query, RestApiOperationParameterStyle.Form);
+        var parameter = new RestApiParameter("id", "string", false, false, RestApiParameterLocation.Query, RestApiParameterStyle.Form);
 
         // Act
         var result = FormStyleParameterSerializer.Serialize(parameter, $"fake_query_param_value{specialSymbol}");
@@ -122,7 +144,7 @@ public class FormStyleParametersSerializerTests
     public void ItShouldEncodeSpecialSymbolsInAmpersandSeparatedParameterValues(string specialSymbol, string encodedEquivalent)
     {
         // Arrange
-        var parameter = new RestApiOperationParameter("id", "array", false, true, RestApiOperationParameterLocation.Query, RestApiOperationParameterStyle.Form);
+        var parameter = new RestApiParameter("id", "array", false, true, RestApiParameterLocation.Query, RestApiParameterStyle.Form);
 
         // Act
         var result = FormStyleParameterSerializer.Serialize(parameter, new JsonArray($"{specialSymbol}"));
@@ -141,7 +163,7 @@ public class FormStyleParametersSerializerTests
     public void ItShouldEncodeSpecialSymbolsInCommaSeparatedParameterValues(string specialSymbol, string encodedEquivalent)
     {
         // Arrange
-        var parameter = new RestApiOperationParameter("id", "array", false, false, RestApiOperationParameterLocation.Query, RestApiOperationParameterStyle.Form);
+        var parameter = new RestApiParameter("id", "array", false, false, RestApiParameterLocation.Query, RestApiParameterStyle.Form);
 
         // Act
         var result = FormStyleParameterSerializer.Serialize(parameter, new JsonArray($"{specialSymbol}"));

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -20,6 +21,7 @@ namespace Microsoft.SemanticKernel.Connectors.Qdrant;
 /// connect, create, delete, and get embeddings data from a Qdrant Vector Database instance.
 /// </summary>
 #pragma warning disable CA1001 // Types that own disposable fields should be disposable. No need to dispose the Http client here. It can either be an internal client using NonDisposableHttpClientHandler or an external client managed by the calling code, which should handle its disposal.
+[Experimental("SKEXP0020")]
 public sealed class QdrantVectorDbClient : IQdrantVectorDbClient
 #pragma warning restore CA1001 // Types that own disposable fields should be disposable. No need to dispose the Http client here. It can either be an internal client using NonDisposableHttpClientHandler or an external client managed by the calling code, which should handle its disposal.
 {
@@ -90,7 +92,7 @@ public sealed class QdrantVectorDbClient : IQdrantVectorDbClient
 
         var data = JsonSerializer.Deserialize<GetVectorsResponse>(responseContent);
 
-        if (data == null)
+        if (data is null)
         {
             this._logger.LogWarning("Unable to deserialize Get response");
             yield break;
@@ -145,7 +147,7 @@ public sealed class QdrantVectorDbClient : IQdrantVectorDbClient
 
         var data = JsonSerializer.Deserialize<SearchVectorsResponse>(responseContent);
 
-        if (data == null)
+        if (data is null)
         {
             this._logger.LogWarning("Unable to deserialize Search response");
             return null;
@@ -209,7 +211,7 @@ public sealed class QdrantVectorDbClient : IQdrantVectorDbClient
     {
         QdrantVectorRecord? existingRecord = await this.GetVectorByPayloadIdAsync(collectionName, metadataId, false, cancellationToken).ConfigureAwait(false);
 
-        if (existingRecord == null)
+        if (existingRecord is null)
         {
             this._logger.LogDebug("Vector not found, nothing to delete");
             return;
@@ -317,7 +319,7 @@ public sealed class QdrantVectorDbClient : IQdrantVectorDbClient
 
         var data = JsonSerializer.Deserialize<SearchVectorsResponse>(responseContent);
 
-        if (data == null)
+        if (data is null)
         {
             this._logger.LogWarning("Unable to deserialize Search response");
             yield break;
@@ -476,14 +478,14 @@ public sealed class QdrantVectorDbClient : IQdrantVectorDbClient
         CancellationToken cancellationToken = default)
     {
         //Apply endpoint override if it's specified.
-        if (this._endpointOverride != null)
+        if (this._endpointOverride is not null)
         {
             request.RequestUri = new Uri(this._endpointOverride, request.RequestUri!);
         }
 
         HttpResponseMessage response = await this._httpClient.SendWithSuccessCheckAsync(request, cancellationToken).ConfigureAwait(false);
 
-        string responseContent = await response.Content.ReadAsStringWithExceptionMappingAsync().ConfigureAwait(false);
+        string responseContent = await response.Content.ReadAsStringWithExceptionMappingAsync(cancellationToken).ConfigureAwait(false);
 
         return (response, responseContent);
     }

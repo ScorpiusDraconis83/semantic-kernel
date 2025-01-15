@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using Microsoft.Extensions.AI;
 
 #pragma warning disable CA1716 // Identifiers should not match keywords
 
@@ -83,7 +84,7 @@ public abstract class KernelPlugin : IEnumerable<KernelFunction>
         List<KernelFunctionMetadata> metadata = new(this.FunctionCount);
         foreach (KernelFunction function in this)
         {
-            metadata.Add(new KernelFunctionMetadata(function.Metadata) { PluginName = this.Name });
+            metadata.Add(function.Metadata);
         }
 
         return metadata;
@@ -92,20 +93,32 @@ public abstract class KernelPlugin : IEnumerable<KernelFunction>
     /// <inheritdoc/>
     public abstract IEnumerator<KernelFunction> GetEnumerator();
 
+    /// <summary>Produces an <see cref="AIFunction"/> for every <see cref="KernelFunction"/> in this plugin.</summary>
+    /// <param name="kernel">
+    /// The <see cref="Kernel"/> instance to pass to the <see cref="KernelFunction"/>s when invoked as part of the <see cref="AIFunction"/>'s invocation.
+    /// </param>
+    /// <returns>An enumerable of <see cref="AIFunction"/> instances, one for each <see cref="KernelFunction"/> in this plugin.</returns>
+    [Experimental("SKEXP0001")]
+    public IEnumerable<AIFunction> AsAIFunctions(Kernel? kernel = null)
+    {
+        foreach (KernelFunction function in this)
+        {
+            yield return function.AsAIFunction(kernel);
+        }
+    }
+
     /// <inheritdoc/>
     IEnumerator IEnumerable.GetEnumerator() => this.GetEnumerator();
 
     /// <summary>Debugger type proxy for the kernel plugin.</summary>
-    private sealed class TypeProxy
+    private sealed class TypeProxy(KernelPlugin plugin)
     {
-        private readonly KernelPlugin _plugin;
-
-        public TypeProxy(KernelPlugin plugin) => this._plugin = plugin;
+        private readonly KernelPlugin _plugin = plugin;
 
         public string Name => this._plugin.Name;
 
         public string Description => this._plugin.Description;
 
-        public KernelFunction[] Functions => this._plugin.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        public KernelFunction[] Functions => [.. this._plugin.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)];
     }
 }

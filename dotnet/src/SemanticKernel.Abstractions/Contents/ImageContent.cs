@@ -1,43 +1,45 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
-using System.Text;
+using System.Text.Json.Serialization;
 
 namespace Microsoft.SemanticKernel;
 
 /// <summary>
 /// Represents image content.
 /// </summary>
-public sealed class ImageContent : KernelContent
+public class ImageContent : BinaryContent
 {
     /// <summary>
-    /// The URI of image.
+    /// Initializes a new instance of the <see cref="ImageContent"/> class.
     /// </summary>
-    public Uri? Uri { get; set; }
+    [JsonConstructor]
+    public ImageContent()
+    {
+    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ImageContent"/> class.
     /// </summary>
     /// <param name="uri">The URI of image.</param>
-    /// <param name="modelId">The model ID used to generate the content</param>
-    /// <param name="innerContent">Inner content</param>
-    /// <param name="encoding">Encoding of the text</param>
-    /// <param name="metadata">Additional metadata</param>
-    public ImageContent(
-        Uri uri,
-        string? modelId = null,
-        object? innerContent = null,
-        Encoding? encoding = null,
-        IReadOnlyDictionary<string, object?>? metadata = null)
-        : base(innerContent, modelId, metadata)
+    public ImageContent(Uri uri) : base(uri)
     {
-        this.Uri = uri;
     }
 
-    /// <inheritdoc/>
-    public override string ToString()
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ImageContent"/> class.
+    /// </summary>
+    /// <param name="dataUri">DataUri of the image</param>
+    public ImageContent(string dataUri) : base(dataUri)
     {
-        return this.Uri?.ToString() ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ImageContent"/> class.
+    /// </summary>
+    /// <param name="data">Byte array of the image</param>
+    /// <param name="mimeType">Mime type of the image</param>
+    public ImageContent(ReadOnlyMemory<byte> data, string? mimeType) : base(data, mimeType)
+    {
     }
 }

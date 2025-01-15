@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -10,6 +11,7 @@ namespace Microsoft.SemanticKernel.Connectors.Pinecone;
 /// Used to create a new index.
 /// See https://docs.pinecone.io/reference/create_index
 /// </summary>
+[Experimental("SKEXP0020")]
 public class IndexDefinition
 {
     /// <summary>
@@ -192,12 +194,12 @@ public class IndexDefinition
         builder.AppendLine($"Replicas: {this.Replicas}, ");
         builder.AppendLine($"PodType: {this.PodType}, ");
 
-        if (this.MetadataConfig != null)
+        if (this.MetadataConfig is not null)
         {
             builder.AppendLine($"MetaIndex: {string.Join(",", this.MetadataConfig)}, ");
         }
 
-        if (this.SourceCollection != null)
+        if (this.SourceCollection is not null)
         {
             builder.AppendLine($"SourceCollection: {this.SourceCollection}, ");
         }

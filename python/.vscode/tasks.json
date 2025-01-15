@@ -6,13 +6,11 @@
         {
             "label": "Python: Run Checks",
             "type": "shell",
-            "command": "poetry",
+            "command": "uv",
             "args": [
                 "run",
                 "pre-commit",
                 "run",
-                "-c",
-                ".conf/.pre-commit-config.yaml",
                 "-a"
             ],
             "problemMatcher": {
@@ -30,27 +28,80 @@
                 }
             },
             "presentation": {
-                "reveal": "silent",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Python: Run Checks - Staged",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "run",
+                "pre-commit",
+                "run",
+            ],
+            "problemMatcher": {
+                "owner": "python",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "message": 4
+                }
+            },
+            "presentation": {
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Python: Run Mypy",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "run",
+                "mypy",
+                "-p",
+                "semantic_kernel",
+                "--config-file",
+                "mypy.ini"
+            ],
+            "problemMatcher": {
+                "owner": "python",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "message": 4
+                }
+            },
+            "presentation": {
                 "panel": "shared"
             }
         },
         {
             "label": "Python: Install",
             "type": "shell",
-            "command": "poetry",
-            "args": [
-                "install"
-            ],
+            "command": "make install PYTHON_VERSION=${input:py_version}",
             "presentation": {
-                "reveal": "silent",
-                "panel": "shared"
+                "reveal": "always",
+                "panel": "new"
             },
             "problemMatcher": []
         },
         {
             "label": "Python: Tests - Unit",
             "type": "shell",
-            "command": "poetry",
+            "command": "uv",
             "args": [
                 "run",
                 "pytest",
@@ -64,9 +115,27 @@
             "problemMatcher": []
         },
         {
+            "label": "Python: Tests - Unit - Failed Only",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "run",
+                "pytest",
+                "tests/unit/",
+                "--last-failed",
+                "-vv"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "Python: Tests - Code Coverage",
             "type": "shell",
-            "command": "poetry run pytest --cov=semantic_kernel --cov-report term-missing tests/unit/",
+            "command": "uv run pytest --cov=semantic_kernel --cov-report=term-missing:skip-covered tests/unit/",
             "group": "test",
             "presentation": {
                 "reveal": "always",
@@ -77,11 +146,17 @@
         {
             "label": "Python: Tests - All",
             "type": "shell",
-            "command": "poetry",
+            "command": "uv",
             "args": [
                 "run",
                 "pytest",
-                "tests/"
+                "tests/",
+                "-n",
+                "logical",
+                "--dist",
+                "loadfile",
+                "--dist",
+                "worksteal"
             ],
             "group": "test",
             "presentation": {
@@ -89,6 +164,33 @@
                 "panel": "shared"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "daprd-debug-python",
+            "type": "daprd",
+            "appId": "dapr-processes",
+            "httpPort": 3500,
+            "appPort": 5001,
+            "grpcPort": 53317,
+            "metricsPort": 9091
+        },
+        {
+            "label": "daprd-down-python",
+            "type": "daprd-down",
+            "appId": "dapr-processes"
+        }
+    ],
+    "inputs": [
+        {
+            "type": "pickString",
+            "options": [
+                "3.10",
+                "3.11",
+                "3.12"
+            ],
+            "id": "py_version",
+            "description": "Python version",
+            "default": "3.10"
         }
     ]
 }
