@@ -5,10 +5,14 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel;
 using Moq;
+using SemanticKernel.UnitTests.Functions.JsonSerializerContexts;
 using Xunit;
 
 namespace SemanticKernel.UnitTests.Functions;
@@ -149,8 +153,10 @@ public sealed class KernelFunctionFromMethodTests1
             return "abc";
         }
 
-        var arguments = new KernelArguments();
-        arguments["someVar"] = s_expected;
+        var arguments = new KernelArguments
+        {
+            ["someVar"] = s_expected
+        };
 
         // Act
         var function = KernelFunctionFactory.CreateFromMethod(Test, loggerFactory: this._logger.Object);
@@ -177,8 +183,10 @@ public sealed class KernelFunctionFromMethodTests1
             return "abc";
         }
 
-        var arguments = new KernelArguments();
-        arguments["someVar"] = s_expected;
+        var arguments = new KernelArguments
+        {
+            ["someVar"] = s_expected
+        };
 
         // Act
         Func<string, string?> method = Test;
@@ -207,8 +215,10 @@ public sealed class KernelFunctionFromMethodTests1
             s_actual = canary;
         }
 
-        var arguments = new KernelArguments();
-        arguments["canary"] = s_expected;
+        var arguments = new KernelArguments
+        {
+            ["canary"] = s_expected
+        };
 
         // Act
         Func<string, Task> method = TestAsync;
@@ -615,7 +625,7 @@ public sealed class KernelFunctionFromMethodTests1
     [Fact]
     public async Task ItSupportFunctionResultAsync()
     {
-        FunctionResult Test() => new(s_nopFunction, "fake-result", CultureInfo.InvariantCulture);
+        static FunctionResult Test() => new(s_nopFunction, "fake-result", CultureInfo.InvariantCulture);
 
         // Act
         var function = KernelFunctionFactory.CreateFromMethod(Test);
@@ -633,7 +643,7 @@ public sealed class KernelFunctionFromMethodTests1
     public async Task ItSupportFunctionResultTaskAsync()
     {
         // Arrange
-        Task<FunctionResult> Test()
+        static Task<FunctionResult> Test()
         {
             var functionResult = new FunctionResult(s_nopFunction, "fake-result", CultureInfo.InvariantCulture);
             return Task.FromResult(functionResult);
@@ -655,7 +665,7 @@ public sealed class KernelFunctionFromMethodTests1
     public async Task ItSupportFunctionResultValueTaskAsync()
     {
         // Arrange
-        ValueTask<FunctionResult> Test()
+        static ValueTask<FunctionResult> Test()
         {
             var functionResult = new FunctionResult(s_nopFunction, "fake-result", CultureInfo.InvariantCulture);
             return ValueTask.FromResult(functionResult);
@@ -679,13 +689,15 @@ public sealed class KernelFunctionFromMethodTests1
         static string Test(int a, long b, decimal c, Guid d, DateTimeOffset e, DayOfWeek? f) =>
             $"{a} {b} {c} {d} {e:R} {f}";
 
-        var arguments = new KernelArguments();
-        arguments["a"] = "1";
-        arguments["b"] = -2;
-        arguments["c"] = "1234";
-        arguments["d"] = Guid.Parse("7e08cc00-1d71-4558-81ed-69929499dea1");
-        arguments["e"] = "Thu, 25 May 2023 20:17:30 GMT";
-        arguments["f"] = DayOfWeek.Monday;
+        var arguments = new KernelArguments
+        {
+            ["a"] = "1",
+            ["b"] = -2,
+            ["c"] = "1234",
+            ["d"] = Guid.Parse("7e08cc00-1d71-4558-81ed-69929499dea1"),
+            ["e"] = "Thu, 25 May 2023 20:17:30 GMT",
+            ["f"] = DayOfWeek.Monday
+        };
 
         // Act
         var function = KernelFunctionFactory.CreateFromMethod(Test);
@@ -703,8 +715,10 @@ public sealed class KernelFunctionFromMethodTests1
     {
         static int Test(MyCustomType mct) => mct.Value * 2;
 
-        var arguments = new KernelArguments();
-        arguments["mct"] = "42";
+        var arguments = new KernelArguments
+        {
+            ["mct"] = "42"
+        };
 
         // Act
         var function = KernelFunctionFactory.CreateFromMethod(Test);
@@ -801,13 +815,13 @@ public sealed class KernelFunctionFromMethodTests1
         {
             var d = (T actual) =>
             {
-                //Check the argument is of the expected type
+                //Check the argument is of the operationCancelled type
                 if (actual is not null)
                 {
                     Assert.IsType<T>(actual);
                 }
 
-                //Check the argument value is the expected value
+                //Check the argument value is the operationCancelled value
                 Assert.Equal(expected, actual);
             };
 
@@ -867,6 +881,66 @@ public sealed class KernelFunctionFromMethodTests1
 
         // Act & Assert
         await function.InvokeAsync(this._kernel, arguments);
+    }
+
+    [Fact]
+    public async Task ItSupportsJsonElementArgumentsImplicitConversionAsync()
+    {
+        //Arrange
+        var arguments = new KernelArguments()
+        {
+            ["l"] = JsonSerializer.Deserialize<JsonElement>((long)1),                 //Passed to parameter of type long
+            ["i"] = JsonSerializer.Deserialize<JsonElement>((byte)1),                //Passed to parameter of type int
+            ["d"] = JsonSerializer.Deserialize<JsonElement>((float)1.0),             //Passed to parameter of type double
+            ["f"] = JsonSerializer.Deserialize<JsonElement>((uint)1.0),              //Passed to parameter of type float
+            ["g"] = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(new Guid("35626209-b0ab-458c-bfc4-43e6c7bd13dc"))),   //Passed to parameter of type string
+            ["dof"] = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(DayOfWeek.Thursday)),   //Passed to parameter of type int
+            ["b"] = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize("true")),   //Passed to parameter of type bool
+        };
+
+        var function = KernelFunctionFactory.CreateFromMethod((long l, int i, double d, float f, string g, int dof, bool b) =>
+        {
+            Assert.Equal(1, l);
+            Assert.Equal(1, i);
+            Assert.Equal(1.0, d);
+            Assert.Equal("35626209-b0ab-458c-bfc4-43e6c7bd13dc", g);
+            Assert.Equal(4, dof);
+            Assert.True(b);
+        },
+        functionName: "Test");
+
+        await function.InvokeAsync(this._kernel, arguments);
+        await function.AsAIFunction().InvokeAsync(arguments);
+    }
+
+    [Fact]
+    public async Task ItSupportsStringJsonElementArgumentsImplicitConversionAsync()
+    {
+        //Arrange
+        var arguments = new KernelArguments()
+        {
+            ["l"] = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize("1")),                 //Passed to parameter of type long
+            ["i"] = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize("1")),                //Passed to parameter of type int
+            ["d"] = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize("1.0")),             //Passed to parameter of type double
+            ["f"] = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize("1.0")),              //Passed to parameter of type float
+            ["g"] = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize("35626209-b0ab-458c-bfc4-43e6c7bd13dc")),   //Passed to parameter of type Guid
+            ["dof"] = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize("4")),   //Passed to parameter of type int
+            ["b"] = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize("false")),   //Passed to parameter of type bool
+        };
+
+        var function = KernelFunctionFactory.CreateFromMethod((long l, int i, double d, float f, Guid g, int dof, bool b) =>
+        {
+            Assert.Equal(1, l);
+            Assert.Equal(1, i);
+            Assert.Equal(1.0, d);
+            Assert.Equal(new Guid("35626209-b0ab-458c-bfc4-43e6c7bd13dc"), g);
+            Assert.Equal(4, dof);
+            Assert.False(b);
+        },
+        functionName: "Test");
+
+        await function.InvokeAsync(this._kernel, arguments);
+        await function.AsAIFunction().InvokeAsync(arguments);
     }
 
     [Fact]
@@ -943,6 +1017,57 @@ public sealed class KernelFunctionFromMethodTests1
     }
 
     [Fact]
+    public async Task ItSupportsGenericArgumentsAndReturnTypesAsync()
+    {
+        List<string> expected = ["1", "2", "3"];
+        KernelArguments input = new() { ["val"] = expected };
+        KernelFunction func;
+        FunctionResult result;
+
+        func = KernelFunctionFactory.CreateFromMethod((List<string> val) => val);
+        result = await func.InvokeAsync(this._kernel, input);
+        Assert.Equal(expected, result.Value);
+
+        func = KernelFunctionFactory.CreateFromMethod((List<string> val) => Enumerable.Range(1, 3).Select(i => i.ToString(CultureInfo.InvariantCulture)));
+        result = await func.InvokeAsync(this._kernel, input);
+        Assert.Equal(expected, result.Value);
+
+        func = KernelFunctionFactory.CreateFromMethod((List<string> val) => Task.FromResult(val));
+        result = await func.InvokeAsync(this._kernel, input);
+        Assert.Equal(expected, result.Value);
+
+        func = KernelFunctionFactory.CreateFromMethod((List<string> val) => ValueTask.FromResult(val));
+        result = await func.InvokeAsync(this._kernel, input);
+        Assert.Equal(expected, result.Value);
+
+        func = KernelFunctionFactory.CreateFromMethod((List<string> val) => val.ToAsyncEnumerable());
+        result = await func.InvokeAsync(this._kernel, input);
+        Assert.Equal(expected, ((IAsyncEnumerable<string>)result.Value!).ToEnumerable());
+    }
+
+    [Fact]
+    public async Task ItSupportsNullableArgumentsAndReturnTypesAsync()
+    {
+        KernelFunction func;
+
+        func = KernelFunctionFactory.CreateFromMethod(int? (int? arg) => arg);
+        Assert.Equal(42, (await func.InvokeAsync(this._kernel, new() { ["arg"] = 42 })).Value);
+        Assert.Null((await func.InvokeAsync(this._kernel, new() { ["arg"] = null })).Value);
+
+        func = KernelFunctionFactory.CreateFromMethod(Task<int?> (int? arg) => Task.FromResult(arg));
+        Assert.Equal(42, (await func.InvokeAsync(this._kernel, new() { ["arg"] = 42 })).Value);
+        Assert.Null((await func.InvokeAsync(this._kernel, new() { ["arg"] = null })).Value);
+
+        func = KernelFunctionFactory.CreateFromMethod(ValueTask<int?> (int? arg) => ValueTask.FromResult(arg));
+        Assert.Equal(42, (await func.InvokeAsync(this._kernel, new() { ["arg"] = 42 })).Value);
+        Assert.Null((await func.InvokeAsync(this._kernel, new() { ["arg"] = null })).Value);
+
+        func = KernelFunctionFactory.CreateFromMethod(IEnumerable<int?> (int? arg) => (IEnumerable<int?>)[arg]);
+        Assert.Equal(new int?[] { 42 }, (await func.InvokeAsync(this._kernel, new() { ["arg"] = 42 })).Value);
+        Assert.Equal(new int?[] { null }, (await func.InvokeAsync(this._kernel, new() { ["arg"] = null })).Value);
+    }
+
+    [Fact]
     public async Task ItUsesContextCultureForParsingFormattingAsync()
     {
         // Arrange
@@ -980,8 +1105,10 @@ public sealed class KernelFunctionFromMethodTests1
     {
         static string Test(Guid g) => g.ToString();
 
-        var arguments = new KernelArguments();
-        arguments["g"] = "7e08cc00-1d71-4558-81ed-69929499dxyz";
+        var arguments = new KernelArguments
+        {
+            ["g"] = "7e08cc00-1d71-4558-81ed-69929499dxyz"
+        };
 
         // Act
         var function = KernelFunctionFactory.CreateFromMethod(Test);
@@ -1067,8 +1194,10 @@ public sealed class KernelFunctionFromMethodTests1
         // Arrange
         static MyCustomType TestCustomType(MyCustomType instance) => instance;
 
-        var arguments = new KernelArguments();
-        arguments["instance"] = "42";
+        var arguments = new KernelArguments
+        {
+            ["instance"] = "42"
+        };
 
         var function = KernelFunctionFactory.CreateFromMethod(TestCustomType);
 
@@ -1103,7 +1232,7 @@ public sealed class KernelFunctionFromMethodTests1
         var function = KernelFunctionFactory.CreateFromMethod(TestAsyncEnumerableTypeAsync);
 
         // Act
-        FunctionResult result = await function.InvokeAsync(this._kernel, new KernelArguments());
+        FunctionResult result = await function.InvokeAsync(this._kernel);
 
         // Assert
         Assert.NotNull(result);
@@ -1119,7 +1248,7 @@ public sealed class KernelFunctionFromMethodTests1
             assertResult.Add(value);
         }
 
-        Assert.True(assertResult.SequenceEqual(new List<int> { 1, 2, 3 }));
+        Assert.True(assertResult.SequenceEqual([1, 2, 3]));
     }
 
     [Fact]
@@ -1203,5 +1332,239 @@ public sealed class KernelFunctionFromMethodTests1
 
         // Assert
         Assert.Same(expected, actual);
+    }
+
+    [Fact]
+    public async Task ItCanDeserializeJsonDocumentAsync()
+    {
+        // Arrange
+        var document = JsonDocument.Parse(@"{""id"":28}");
+        CustomTypeForJsonTests? actualArgValue = null;
+
+        var func = KernelFunctionFactory.CreateFromMethod((CustomTypeForJsonTests param) => { actualArgValue = param; });
+
+        // Act
+        var res = await func.InvokeAsync(this._kernel, new() { ["param"] = document });
+
+        // Assert
+        Assert.NotNull(actualArgValue);
+        Assert.Equal(28, actualArgValue.Id);
+    }
+
+    [Fact]
+    public async Task ItCanDeserializeJsonElementAsync()
+    {
+        // Arrange
+        var element = JsonDocument.Parse(@"{""id"":28}").RootElement;
+        CustomTypeForJsonTests? actualArgValue = null;
+
+        var func = KernelFunctionFactory.CreateFromMethod((CustomTypeForJsonTests param) => { actualArgValue = param; });
+
+        // Act
+        var res = await func.InvokeAsync(this._kernel, new() { ["param"] = element });
+
+        // Assert
+        Assert.NotNull(actualArgValue);
+        Assert.Equal(28, actualArgValue.Id);
+    }
+
+    [Fact]
+    public async Task ItCanDeserializeJsonNodeAsync()
+    {
+        // Arrange
+        var node = JsonNode.Parse(@"{""id"":28}");
+        CustomTypeForJsonTests? actualArgValue = null;
+
+        var func = KernelFunctionFactory.CreateFromMethod((CustomTypeForJsonTests param) => { actualArgValue = param; });
+
+        // Act
+        var res = await func.InvokeAsync(this._kernel, new() { ["param"] = node });
+
+        // Assert
+        Assert.NotNull(actualArgValue);
+        Assert.Equal(28, actualArgValue.Id);
+    }
+
+    [Fact]
+    public async Task ItShouldNotDeserializeIfParameterTypeAndArgumentTypeAreSameAsync()
+    {
+        // Arrange
+        var node = JsonNode.Parse(@"{""id"":28}");
+        JsonNode? actualArgValue = null;
+
+        var func = KernelFunctionFactory.CreateFromMethod((JsonNode? param) => { actualArgValue = param; });
+
+        // Act
+        var res = await func.InvokeAsync(this._kernel, new() { ["param"] = node });
+
+        // Assert
+        Assert.NotNull(actualArgValue);
+        Assert.Same(node, actualArgValue);
+    }
+
+    [Fact]
+    public async Task ItCanDeserializeJsonStringAsync()
+    {
+        // Arrange
+        var jsonString = @"{""id"":28}";
+        CustomTypeForJsonTests? actualArgValue = null;
+
+        var func = KernelFunctionFactory.CreateFromMethod((CustomTypeForJsonTests param) => { actualArgValue = param; });
+
+        // Act
+        var res = await func.InvokeAsync(this._kernel, new() { ["param"] = jsonString });
+
+        // Assert
+        Assert.NotNull(actualArgValue);
+        Assert.Equal(28, actualArgValue.Id);
+    }
+
+    [Fact]
+    public async Task ItCanDeserializeThirdPartyJsonPrimitivesAsync()
+    {
+        // Arrange
+        var thirdPartyJsonPrimitive = new ThirdPartyJsonPrimitive(@"{""id"":28}");
+        CustomTypeForJsonTests? actualArgValue = null;
+
+        var func = KernelFunctionFactory.CreateFromMethod((CustomTypeForJsonTests param) => { actualArgValue = param; });
+
+        // Act
+        var res = await func.InvokeAsync(this._kernel, new() { ["param"] = thirdPartyJsonPrimitive });
+
+        // Assert
+        Assert.NotNull(actualArgValue);
+        Assert.Equal(28, actualArgValue.Id);
+    }
+
+    [Fact]
+    public async Task ItThrowsKernelFunctionCanceledExceptionWhenOperationIsCanceledAsync()
+    {
+        // Arrange
+        var arguments = new KernelArguments();
+        var operationCancelled = new OperationCanceledException("OperationCanceledException");
+        operationCancelled.Data.Add("Key", "Value");
+        KernelFunction func = KernelFunctionFactory.CreateFromMethod(() => { throw operationCancelled; });
+
+        // Act
+        Exception actual = await Record.ExceptionAsync(() => func.InvokeAsync(this._kernel, arguments));
+
+        // Assert
+        Assert.NotNull(actual);
+        Assert.True(actual is KernelFunctionCanceledException);
+        Assert.True(actual.Data.Contains("Key"));
+        Assert.Equal("Value", actual.Data["Key"]);
+    }
+
+    [Theory]
+    [ClassData(typeof(TestJsonSerializerOptionsForTestParameterAndReturnTypes))]
+    public async Task ItCanBeCloned(JsonSerializerOptions? jsos)
+    {
+        // Arrange
+        var kernel = new Kernel();
+
+        static TestReturnType StaticMethod(TestParameterType p1)
+        {
+            return new TestReturnType() { Result = int.Parse(p1.Value!) };
+        }
+
+        // Arrange & Act
+        KernelFunction function = jsos is not null ?
+            function = KernelFunctionFromMethod.Create(((Func<TestParameterType, TestReturnType>)StaticMethod).Method, jsonSerializerOptions: jsos, functionName: "f1", description: "f1-description") :
+            function = KernelFunctionFromMethod.Create(((Func<TestParameterType, TestReturnType>)StaticMethod).Method, functionName: "f1", description: "f1-description");
+
+        // Act
+        function = function.Clone("new-plugin-name");
+
+        // Assert plugin name
+        Assert.Equal("new-plugin-name", function.Metadata.PluginName);
+
+        // Assert schema
+        Assert.NotEmpty(function.Metadata.Parameters);
+        Assert.NotNull(function.Metadata.Parameters[0].Schema);
+        Assert.Equal("{\"type\":\"object\",\"properties\":{\"Value\":{\"type\":[\"string\",\"null\"]}}}", function.Metadata.Parameters[0].Schema!.ToString());
+
+        Assert.NotNull(function.Metadata.ReturnParameter);
+        Assert.NotNull(function.Metadata.ReturnParameter.Schema);
+        Assert.Equal("{\"type\":\"object\",\"properties\":{\"Result\":{\"type\":\"integer\"}}}", function.Metadata.ReturnParameter.Schema!.ToString());
+
+        // Assert invocation
+        var invokeResult = await function.InvokeAsync(this._kernel, new() { ["p1"] = """{"Value": "34"}""" }); // Check marshaling logic that deserialize JSON into target type using JSOs
+        var result = invokeResult?.GetValue<TestReturnType>();
+        Assert.Equal(34, result?.Result);
+    }
+
+    [Theory]
+    [ClassData(typeof(TestJsonSerializerOptionsForTestParameterAndReturnTypes))]
+    public void ItCanCreateFunctionMetadata(JsonSerializerOptions? jsos)
+    {
+        // Arrange
+        static TestReturnType StaticMethod(TestParameterType p1)
+        {
+            return new TestReturnType() { Result = int.Parse(p1.Value!) };
+        }
+
+        // Act
+        KernelFunctionMetadata metadata = jsos is not null ?
+            KernelFunctionFromMethod.CreateMetadata(((Func<TestParameterType, TestReturnType>)StaticMethod).Method, jsos, functionName: "f1_name", description: "f1-description") :
+            KernelFunctionFromMethod.CreateMetadata(((Func<TestParameterType, TestReturnType>)StaticMethod).Method, functionName: "f1_name", description: "f1-description");
+
+        // Assert
+        Assert.Equal("f1_name", metadata.Name);
+        Assert.Equal("f1-description", metadata.Description);
+
+        Assert.NotEmpty(metadata.Parameters);
+        Assert.NotNull(metadata.Parameters[0].Schema);
+        Assert.Equal("""{"type":"object","properties":{"Value":{"type":["string","null"]}}}""", metadata.Parameters[0].Schema!.ToString());
+
+        Assert.NotNull(metadata.ReturnParameter);
+        Assert.NotNull(metadata.ReturnParameter.Schema);
+        Assert.Equal("""{"type":"object","properties":{"Result":{"type":"integer"}}}""", metadata.ReturnParameter.Schema!.ToString());
+    }
+
+    [Theory]
+    [ClassData(typeof(TestJsonSerializerOptionsForTestParameterAndReturnTypes))]
+    public void ItCanCreateFunctionMetadataUsingOverloadWithOptions(JsonSerializerOptions? jsos)
+    {
+        // Arrange
+        static TestReturnType StaticMethod(TestParameterType p1)
+        {
+            return new TestReturnType() { Result = int.Parse(p1.Value!) };
+        }
+
+        KernelFunctionFromMethodOptions options = new()
+        {
+            FunctionName = "f1_name",
+            Description = "f1-description"
+        };
+
+        // Act
+        KernelFunctionMetadata metadata = jsos is not null ?
+            KernelFunctionFromMethod.CreateMetadata(((Func<TestParameterType, TestReturnType>)StaticMethod).Method, jsos, options) :
+            KernelFunctionFromMethod.CreateMetadata(((Func<TestParameterType, TestReturnType>)StaticMethod).Method, options);
+
+        // Assert
+        Assert.Equal("f1_name", metadata.Name);
+        Assert.Equal("f1-description", metadata.Description);
+
+        Assert.NotEmpty(metadata.Parameters);
+        Assert.NotNull(metadata.Parameters[0].Schema);
+        Assert.Equal("""{"type":"object","properties":{"Value":{"type":["string","null"]}}}""", metadata.Parameters[0].Schema!.ToString());
+
+        Assert.NotNull(metadata.ReturnParameter);
+        Assert.NotNull(metadata.ReturnParameter.Schema);
+        Assert.Equal("""{"type":"object","properties":{"Result":{"type":"integer"}}}""", metadata.ReturnParameter.Schema!.ToString());
+    }
+
+#pragma warning disable CA1812 // Avoid uninstantiated internal classes
+    private sealed class CustomTypeForJsonTests
+#pragma warning restore CA1812 // Avoid uninstantiated internal classes
+    {
+        [JsonPropertyName("id")]
+        public int Id { get; set; }
+    }
+
+    private sealed class ThirdPartyJsonPrimitive(string jsonToReturn)
+    {
+        public override string ToString() => jsonToReturn;
     }
 }

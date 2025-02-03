@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http;
 using System.Text.Json.Serialization;
 
@@ -11,6 +12,7 @@ namespace Microsoft.SemanticKernel.Connectors.Pinecone;
 /// QueryRequest
 /// See https://docs.pinecone.io/reference/query
 /// </summary>
+[Experimental("SKEXP0020")]
 internal sealed class QueryRequest
 {
     /// <summary>
@@ -88,7 +90,7 @@ internal sealed class QueryRequest
 
     public HttpRequestMessage Build()
     {
-        if (this.Filter != null)
+        if (this.Filter is not null)
         {
             this.Filter = PineconeUtils.ConvertFilterToPineconeFilter(this.Filter);
         }

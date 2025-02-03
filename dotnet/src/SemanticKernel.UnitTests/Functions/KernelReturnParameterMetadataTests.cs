@@ -3,6 +3,7 @@
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.SemanticKernel;
+using SemanticKernel.UnitTests.Functions.JsonSerializerContexts;
 using Xunit;
 
 #pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
@@ -14,25 +15,29 @@ public class KernelReturnParameterMetadataTests
     [Fact]
     public void ItRoundtripsArguments()
     {
-        var m = new KernelReturnParameterMetadata { Description = "something", ParameterType = typeof(int), Schema = KernelJsonSchema.Parse("{ \"type\":\"object\" }") };
+        var m = new KernelReturnParameterMetadata { Description = "something", ParameterType = typeof(int), Schema = KernelJsonSchema.Parse("""{ "type":"object" }""") };
         Assert.Equal("something", m.Description);
         Assert.Equal(typeof(int), m.ParameterType);
-        Assert.Equal(JsonSerializer.Serialize(KernelJsonSchema.Parse("{ \"type\":\"object\" }")), JsonSerializer.Serialize(m.Schema));
+        Assert.Equal(JsonSerializer.Serialize(KernelJsonSchema.Parse("""{ "type":"object" }""")), JsonSerializer.Serialize(m.Schema));
     }
 
     [Fact]
     public void ItInfersSchemaFromType()
     {
-        Assert.Equal(JsonSerializer.Serialize(KernelJsonSchema.Parse("{ \"type\":\"integer\" }")), JsonSerializer.Serialize(new KernelReturnParameterMetadata { ParameterType = typeof(int) }.Schema));
-        Assert.Equal(JsonSerializer.Serialize(KernelJsonSchema.Parse("{ \"type\":\"number\" }")), JsonSerializer.Serialize(new KernelReturnParameterMetadata { ParameterType = typeof(double) }.Schema));
-        Assert.Equal(JsonSerializer.Serialize(KernelJsonSchema.Parse("{ \"type\":\"string\" }")), JsonSerializer.Serialize(new KernelReturnParameterMetadata { ParameterType = typeof(string) }.Schema)); ;
+        Assert.Equal(JsonSerializer.Serialize(KernelJsonSchema.Parse("""{ "type":"integer" }""")), JsonSerializer.Serialize(new KernelReturnParameterMetadata { ParameterType = typeof(int) }.Schema));
+        Assert.Equal(JsonSerializer.Serialize(KernelJsonSchema.Parse("""{ "type":"number" }""")), JsonSerializer.Serialize(new KernelReturnParameterMetadata { ParameterType = typeof(double) }.Schema));
+        Assert.Equal(JsonSerializer.Serialize(KernelJsonSchema.Parse("""{ "type":"string" }""")), JsonSerializer.Serialize(new KernelReturnParameterMetadata { ParameterType = typeof(string) }.Schema));
     }
 
-    [Fact]
-    public void ItIncludesDescriptionInSchema()
+    [Theory]
+    [ClassData(typeof(TestJsonSerializerOptionsForPrimitives))]
+    public void ItIncludesDescriptionInSchema(JsonSerializerOptions? jsos)
     {
-        var m = new KernelReturnParameterMetadata { Description = "d", ParameterType = typeof(int) };
-        Assert.Equal(JsonSerializer.Serialize(KernelJsonSchema.Parse("{ \"type\":\"integer\", \"description\":\"d\" }")), JsonSerializer.Serialize(m.Schema));
+        var m = jsos is not null ?
+            new KernelReturnParameterMetadata(jsos) { Description = "d", ParameterType = typeof(int) } :
+            new KernelReturnParameterMetadata() { Description = "d", ParameterType = typeof(int) };
+
+        Assert.Equal(JsonSerializer.Serialize(KernelJsonSchema.Parse("""{"description":"d", "type":"integer"}""")), JsonSerializer.Serialize(m.Schema));
     }
 
     [Fact]

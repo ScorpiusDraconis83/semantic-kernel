@@ -3,8 +3,6 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
-using Json.Schema;
-using Json.Schema.Generation;
 
 namespace Microsoft.SemanticKernel;
 
@@ -23,16 +21,34 @@ public sealed class KernelParameterMetadata
     private Type? _parameterType;
     /// <summary>The schema of the parameter, potentially lazily-initialized.</summary>
     private InitializedSchema? _schema;
+    /// <summary>The serializer options to generate JSON schema.</summary>
+    private readonly JsonSerializerOptions? _jsonSerializerOptions;
 
     /// <summary>Initializes the <see cref="KernelParameterMetadata"/> for a parameter with the specified name.</summary>
     /// <param name="name">The name of the parameter.</param>
     /// <exception cref="ArgumentNullException">The <paramref name="name"/> was null.</exception>
     /// <exception cref="ArgumentException">The <paramref name="name"/> was empty or composed entirely of whitespace.</exception>
+    [RequiresUnreferencedCode("Uses reflection to generate schema, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection to generate schema, making it incompatible with AOT scenarios.")]
     public KernelParameterMetadata(string name) => this.Name = name;
+
+    /// <summary>Initializes the <see cref="KernelParameterMetadata"/> for a parameter with the specified name.</summary>
+    /// <param name="name">The name of the parameter.</param>
+    /// <param name="jsonSerializerOptions">The <see cref="JsonSerializerOptions"/> to generate JSON schema.</param>
+    /// <exception cref="ArgumentNullException">The <paramref name="name"/> was null.</exception>
+    /// <exception cref="ArgumentException">The <paramref name="name"/> was empty or composed entirely of whitespace.</exception>
+    [Experimental("SKEXP0120")]
+    public KernelParameterMetadata(string name, JsonSerializerOptions jsonSerializerOptions)
+    {
+        this.Name = name;
+        this._jsonSerializerOptions = jsonSerializerOptions;
+    }
 
     /// <summary>Initializes a <see cref="KernelParameterMetadata"/> as a copy of another <see cref="KernelParameterMetadata"/>.</summary>
     /// <exception cref="ArgumentNullException">The <paramref name="metadata"/> was null.</exception>
     /// <remarks>This creates a shallow clone of <paramref name="metadata"/>.</remarks>
+    [RequiresUnreferencedCode("Uses reflection, if no JSOs are available in the metadata, to generate the schema, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection, if no JSOs are available in the metadata, to generate the schema, making it incompatible with AOT scenarios.")]
     public KernelParameterMetadata(KernelParameterMetadata metadata)
     {
         Verify.NotNull(metadata);
@@ -42,6 +58,25 @@ public sealed class KernelParameterMetadata
         this.IsRequired = metadata.IsRequired;
         this._parameterType = metadata._parameterType;
         this._schema = metadata._schema;
+        this._jsonSerializerOptions = metadata._jsonSerializerOptions;
+    }
+
+    /// <summary>Initializes a <see cref="KernelParameterMetadata"/> as a copy of another <see cref="KernelParameterMetadata"/>.</summary>
+    /// <exception cref="ArgumentNullException">The <paramref name="metadata"/> was null.</exception>
+    /// <param name="metadata">The metadata to copy.</param>
+    /// <param name="jsonSerializerOptions">The <see cref="JsonSerializerOptions"/> to generate JSON schema.</param>
+    /// <remarks>This creates a shallow clone of <paramref name="metadata"/>.</remarks>
+    [Experimental("SKEXP0120")]
+    public KernelParameterMetadata(KernelParameterMetadata metadata, JsonSerializerOptions jsonSerializerOptions)
+    {
+        Verify.NotNull(metadata);
+        this._name = metadata._name;
+        this._description = metadata._description;
+        this._defaultValue = metadata._defaultValue;
+        this.IsRequired = metadata.IsRequired;
+        this._parameterType = metadata._parameterType;
+        this._schema = metadata._schema;
+        this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
     /// <summary>Gets the name of the function.</summary>
@@ -105,7 +140,9 @@ public sealed class KernelParameterMetadata
     /// <summary>Gets a JSON Schema describing the parameter's type.</summary>
     public KernelJsonSchema? Schema
     {
-        get => (this._schema ??= InferSchema(this.ParameterType, this.DefaultValue, this.Description)).Schema;
+        [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "The warning is shown and should be addressed at the class creation site; no need to show it again at the members invocation sites.")]
+        [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.", Justification = "The warning is shown and should be addressed at the class creation site; no need to show it again at the members invocation sites.")]
+        get => (this._schema ??= InferSchema(this.ParameterType, this.DefaultValue, this.Description, this._jsonSerializerOptions)).Schema;
         init => this._schema = value is null ? null : new() { Inferred = false, Schema = value };
     }
 
@@ -113,7 +150,10 @@ public sealed class KernelParameterMetadata
     /// <param name="parameterType">The parameter type. If null, no schema can be inferred.</param>
     /// <param name="defaultValue">The parameter's default value, if any.</param>
     /// <param name="description">The parameter description. If null, it won't be included in the schema.</param>
-    internal static InitializedSchema InferSchema(Type? parameterType, object? defaultValue, string? description)
+    /// <param name="jsonSerializerOptions">The <see cref="JsonSerializerOptions"/> to generate JSON schema.</param>
+    [RequiresUnreferencedCode("Uses reflection if no JSOs are provided, making it incompatible with AOT scenarios.")]
+    [RequiresDynamicCode("Uses reflection if no JSOs are provided, making it incompatible with AOT scenarios.")]
+    internal static InitializedSchema InferSchema(Type? parameterType, object? defaultValue, string? description, JsonSerializerOptions? jsonSerializerOptions)
     {
         KernelJsonSchema? schema = null;
 
@@ -140,12 +180,9 @@ public sealed class KernelParameterMetadata
                         description += $"{(needsSpace ? " " : "")}(default value: {stringDefault})";
                     }
 
-                    var builder = new JsonSchemaBuilder().FromType(parameterType);
-                    if (!string.IsNullOrWhiteSpace(description))
-                    {
-                        builder = builder.Description(description!);
-                    }
-                    schema = new KernelJsonSchema(JsonSerializer.SerializeToElement(builder.Build()));
+                    schema = jsonSerializerOptions is not null
+                        ? KernelJsonSchemaBuilder.Build(parameterType, jsonSerializerOptions, description)
+                        : KernelJsonSchemaBuilder.Build(parameterType, description);
                 }
                 catch (ArgumentException)
                 {

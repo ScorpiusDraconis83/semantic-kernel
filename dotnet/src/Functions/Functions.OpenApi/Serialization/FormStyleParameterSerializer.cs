@@ -7,26 +7,27 @@ using System.Web;
 namespace Microsoft.SemanticKernel.Plugins.OpenApi;
 
 /// <summary>
-/// Serializes REST API operation parameter of the 'Form' style.
+/// Serializes REST API parameter of the 'Form' style.
 /// </summary>
 internal static class FormStyleParameterSerializer
 {
     /// <summary>
-    /// Serializes a REST API operation `Form` style parameter.
+    /// Serializes a REST API `Form` style parameter.
     /// </summary>
-    /// <param name="parameter">The REST API operation parameter to serialize.</param>
+    /// <param name="parameter">The REST API parameter to serialize.</param>
     /// <param name="argument">The parameter argument.</param>
     /// <returns>The serialized parameter.</returns>
-    public static string Serialize(RestApiOperationParameter parameter, JsonNode argument)
+    public static string Serialize(RestApiParameter parameter, JsonNode argument)
     {
         const string ArrayType = "array";
 
         Verify.NotNull(parameter);
         Verify.NotNull(argument);
 
-        if (parameter.Style != RestApiOperationParameterStyle.Form)
+        var style = parameter.Style ?? RestApiParameterStyle.Form;
+        if (style != RestApiParameterStyle.Form)
         {
-            throw new NotSupportedException($"Unsupported Rest API operation parameter style '{parameter.Style}' for parameter '{parameter.Name}'");
+            throw new NotSupportedException($"Unsupported Rest API parameter style '{parameter.Style}' for parameter '{parameter.Name}'");
         }
 
         // Handling parameters of array type.
@@ -35,17 +36,23 @@ internal static class FormStyleParameterSerializer
             return SerializeArrayParameter(parameter, argument);
         }
 
-        // Handling parameters of primitive and removing extra quotes added by the JsonValue for string values.
+        // Handling parameters where the underlying value is already a string.
+        if (argument is JsonValue jsonValue && jsonValue.TryGetValue(out string? value))
+        {
+            return $"{parameter.Name}={HttpUtility.UrlEncode(value)}";
+        }
+
+        // Handling parameters of any arbitrary type by using JSON format without enclosing quotes.
         return $"{parameter.Name}={HttpUtility.UrlEncode(argument.ToString().Trim('"'))}";
     }
 
     /// <summary>
     /// Serializes an array-type parameter.
     /// </summary>
-    /// <param name="parameter">The REST API operation parameter to serialize.</param>
+    /// <param name="parameter">The REST API parameter to serialize.</param>
     /// <param name="argument">The argument value.</param>
     /// <returns>The serialized parameter string.</returns>
-    private static string SerializeArrayParameter(RestApiOperationParameter parameter, JsonNode argument)
+    private static string SerializeArrayParameter(RestApiParameter parameter, JsonNode argument)
     {
         if (argument is not JsonArray array)
         {
